@@ -29,10 +29,11 @@ def _make_marked_img(out_path):
     iw, ih = img.size  # 1080x1350
     draw = ImageDraw.Draw(img)
     # 「おでん×スタンド 三徳六味」: 中央やや下
-    cx1, cy1, r1 = int(iw * 0.50), int(ih * 0.60), 90
-    draw.ellipse([cx1-r1, cy1-r1, cx1+r1, cy1+r1], outline=(255, 30, 30, 255), width=8)
+    cx1, cy1 = int(iw * 0.50), int(ih * 0.64) + 110 - 35 + 8
+    rx1, ry1 = 170, 55
+    draw.ellipse([cx1-rx1, cy1-ry1, cx1+rx1, cy1+ry1], outline=(255, 30, 30, 255), width=8)
     # 「E-07」: 中央右上
-    cx2, cy2, r2 = int(iw * 0.62), int(ih * 0.38), 60
+    cx2, cy2, r2 = int(iw * 0.62) - 15, int(ih * 0.38) + 15, 60
     draw.ellipse([cx2-r2, cy2-r2, cx2+r2, cy2+r2], outline=(255, 30, 30, 255), width=8)
     img.convert("RGB").save(out_path, quality=95)
 
