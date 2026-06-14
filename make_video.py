@@ -42,20 +42,8 @@ def ease_out(t):
     return 1 - (1 - t) ** 3
 
 def fit_contain_blurred(img, w, h):
-    """ぼかし背景 + オリジナル比率で中央配置"""
-    # ぼかし背景: cover crop後にblur
-    r_cover = max(w / img.width, h / img.height)
-    bg = img.resize((int(img.width * r_cover), int(img.height * r_cover)), Image.LANCZOS)
-    bx = (bg.width - w) // 2
-    by = (bg.height - h) // 2
-    bg = bg.crop((bx, by, bx + w, by + h))
-    bg = bg.filter(ImageFilter.GaussianBlur(radius=30))
-    # 暗くする
-    dark = Image.new("RGBA", (w, h), (0, 0, 0, 120))
-    bg = bg.convert("RGBA")
-    bg = Image.alpha_composite(bg, dark)
-
-    # フォアグラウンド: contain
+    """黒背景 + オリジナル比率で中央配置"""
+    bg = Image.new("RGBA", (w, h), (0, 0, 0, 255))
     r_fit = min(w / img.width, h / img.height)
     fw, fh = int(img.width * r_fit), int(img.height * r_fit)
     fg = img.resize((fw, fh), Image.LANCZOS).convert("RGBA")
