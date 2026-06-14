@@ -1,74 +1,36 @@
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import os, math, subprocess, tempfile, shutil
 
 FFMPEG = "/usr/local/lib/python3.11/dist-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2"
 W, H = 1080, 1920
 FPS = 30
 IMG_DIR = "/home/user/odenn2/images/"
+OUT = "/home/user/odenn2/pr_video.mp4"
+TMP = tempfile.mkdtemp()
 
-# 実ファイル名をOSから取得してマッピング
 def _img(name):
     for f in os.listdir(IMG_DIR):
         if name in f:
             return os.path.join(IMG_DIR, f)
     raise FileNotFoundError(name)
-OUT = "/home/user/odenn2/pr_video.mp4"
-TMP = tempfile.mkdtemp()
 
-# 各画像のテロップ設定: (ファイル名, テロップ上, テロップ下, 表示秒数)
+# (キーワード, テロップ上, テロップ下, 秒数)  ※下テロップNoneで非表示
 SCENES = [
-    ("内観",
-     "大阪メトロ梅田駅徒歩5分",
-     "EST B1F 『おでん×スタンド』",
-     4),
-    ("釜_0012",
-     "本格派おでんを気軽に",
-     "リーズナブルな価格で",
-     4),
-    ("お出汁",
-     "丁寧にとった長時間コトコトだし",
-     "コクの旨味がしみわたる一品",
-     4),
-    ("組み合わせ",
-     "女子会・デートにも♡",
-     "お好みで選べるセットメニュー",
-     4),
-    ("IMG_0738",
-     "スタイリッシュな店内で",
-     "気軽に立ち寄りやすい♡",
-     3),
-    ("IMG_0747",
-     "女性一人でも安心",
-     "アフターワークにも最適",
-     3),
-    ("IMG_0752",
-     "豊富なラインナップ",
-     "ヘルシーなおでんも♡",
-     3),
-    ("QR",
-     "【おでん×スタンド】",
-     "大阪メトロ梅田駅徒歩5分 ・ EST B1F",
-     5),
+    ("内観",      "大阪メトロ梅田駅 徒歩5分",         "EST 『おでん×スタンド』",   4),
+    ("釜_0012",   "本格派おでんを気軽に",              "リーズナブルな価格で",       4),
+    ("お出汁",    "丁寧にとった長時間コトコトだし",    "コクの旨味がしみわたる一品", 4),
+    ("組み合わせ","女子会・デートにも",                "お好みで選べるコース料理",   4),
+    ("IMG_0738",  "スタイリッシュな店内で",            "気軽に立ち寄りやすい",       3),
+    ("IMG_0747",  "女性一人でも安心",                  "アフターワークにも最適",     3),
+    ("IMG_0752",  "豊富なラインナップ",                "ヘルシーなおでんも",         3),
+    ("QR",        None,                                None,                         5),
 ]
 
-def fit_cover(img, w, h):
-    r = max(w / img.width, h / img.height)
-    new_w, new_h = int(img.width * r), int(img.height * r)
-    img = img.resize((new_w, new_h), Image.LANCZOS)
-    x = (new_w - w) // 2
-    y = (new_h - h) // 2
-    return img.crop((x, y, x + w, y + h))
-
-def draw_text_with_shadow(draw, text, x, y, font, fill, shadow_offset=3):
-    draw.text((x + shadow_offset, y + shadow_offset), text, font=font, fill=(0, 0, 0, 180))
-    draw.text((x, y), text, font=font, fill=fill)
-
-def find_font(size):
+def find_font(size, bold=True):
     candidates = [
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
         "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJKjp-Bold.otf",
         "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
     ]
     for c in candidates:
@@ -76,56 +38,128 @@ def find_font(size):
             return ImageFont.truetype(c, size)
     return ImageFont.load_default()
 
+def ease_out(t):
+    return 1 - (1 - t) ** 3
+
+def fit_contain_blurred(img, w, h):
+    """ぼかし背景 + オリジナル比率で中央配置"""
+    # ぼかし背景: cover crop後にblur
+    r_cover = max(w / img.width, h / img.height)
+    bg = img.resize((int(img.width * r_cover), int(img.height * r_cover)), Image.LANCZOS)
+    bx = (bg.width - w) // 2
+    by = (bg.height - h) // 2
+    bg = bg.crop((bx, by, bx + w, by + h))
+    bg = bg.filter(ImageFilter.GaussianBlur(radius=30))
+    # 暗くする
+    dark = Image.new("RGBA", (w, h), (0, 0, 0, 120))
+    bg = bg.convert("RGBA")
+    bg = Image.alpha_composite(bg, dark)
+
+    # フォアグラウンド: contain
+    r_fit = min(w / img.width, h / img.height)
+    fw, fh = int(img.width * r_fit), int(img.height * r_fit)
+    fg = img.resize((fw, fh), Image.LANCZOS).convert("RGBA")
+    fx = (w - fw) // 2
+    fy = (h - fh) // 2
+    bg.paste(fg, (fx, fy), fg)
+    return bg
+
+def draw_telop(base, top_text, bottom_text, alpha_factor):
+    """おしゃれテロップを描画して返す"""
+    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+
+    a = alpha_factor  # 0.0〜1.0
+
+    # ===== 上部テロップエリア =====
+    if top_text:
+        font_sub = find_font(32)
+        font_main = find_font(56)
+
+        # 半透明の帯
+        band_h = 200
+        band = Image.new("RGBA", (W, band_h), (0, 0, 0, int(160 * a)))
+        layer.paste(band, (0, 0), band)
+
+        # 細いゴールドライン
+        line_alpha = int(200 * a)
+        draw.line([(60, 155), (W - 60, 155)], fill=(200, 170, 100, line_alpha), width=1)
+
+        # テキスト（白・細め）
+        bbox = draw.textbbox((0, 0), top_text, font=font_main)
+        tw = bbox[2] - bbox[0]
+        tx = (W - tw) // 2
+        ty = 80
+        # 薄いドロップシャドウ
+        draw.text((tx + 2, ty + 2), top_text, font=font_main, fill=(0, 0, 0, int(100 * a)))
+        draw.text((tx, ty), top_text, font=font_main, fill=(255, 255, 255, int(255 * a)))
+
+    # ===== 下部テロップエリア =====
+    if bottom_text:
+        font_bottom = find_font(44)
+        font_accent = find_font(26)
+
+        # 下部グラデーション帯
+        grad_h = 280
+        for i in range(grad_h):
+            row_a = int(190 * (1 - i / grad_h) * a)
+            draw.line([(0, H - grad_h + i), (W, H - grad_h + i)], fill=(10, 8, 6, row_a))
+
+        # アクセントライン（上）
+        line_alpha = int(180 * a)
+        draw.line([(60, H - 230), (W - 60, H - 230)], fill=(200, 170, 100, line_alpha), width=1)
+
+        # メインテキスト
+        bbox = draw.textbbox((0, 0), bottom_text, font=font_bottom)
+        bw = bbox[2] - bbox[0]
+        bx = (W - bw) // 2
+        by = H - 200
+        draw.text((bx + 2, by + 2), bottom_text, font=font_bottom, fill=(0, 0, 0, int(100 * a)))
+        draw.text((bx, by), bottom_text, font=font_bottom, fill=(230, 200, 140, int(255 * a)))
+
+        # アクセントライン（下）
+        draw.line([(60, H - 130), (W - 60, H - 130)], fill=(200, 170, 100, line_alpha), width=1)
+
+        # 小さなサブテキスト
+        sub = "おでん × スタンド"
+        bbox3 = draw.textbbox((0, 0), sub, font=font_accent)
+        sw = bbox3[2] - bbox3[0]
+        draw.text(((W - sw) // 2, H - 110), sub, font=font_accent,
+                  fill=(200, 180, 140, int(180 * a)))
+
+    return layer
+
 def make_frame(img_path, top_text, bottom_text, t, duration):
     img = Image.open(img_path).convert("RGBA")
-    img = fit_cover(img, W, H)
+    frame = fit_contain_blurred(img, W, H)
 
-    # 暗めのオーバーレイ (下部と上部)
-    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    draw_ov = ImageDraw.Draw(overlay)
-    # 上部グラデーション帯
-    for i in range(200):
-        alpha = int(160 * (1 - i / 200))
-        draw_ov.line([(0, i), (W, i)], fill=(0, 0, 0, alpha))
-    # 下部グラデーション帯
-    for i in range(250):
-        alpha = int(180 * (1 - i / 250))
-        draw_ov.line([(0, H - i), (W, H - i)], fill=(0, 0, 0, alpha))
-    img = Image.alpha_composite(img, overlay)
-
-    draw = ImageDraw.Draw(img)
-
-    # フォント
-    font_top = find_font(62)
-    font_bottom = find_font(54)
-
-    # フェードイン・アウト
-    fade = 0.5
-    if t < fade:
-        alpha_factor = t / fade
-    elif t > duration - fade:
-        alpha_factor = (duration - t) / fade
+    # フェードイン・アウト + スライドイン
+    fade_in = 0.6
+    fade_out = 0.5
+    if t < fade_in:
+        raw = t / fade_in
+        alpha_factor = ease_out(raw)
+    elif t > duration - fade_out:
+        alpha_factor = (duration - t) / fade_out
     else:
         alpha_factor = 1.0
-    alpha = int(255 * alpha_factor)
+    alpha_factor = max(0.0, min(1.0, alpha_factor))
 
-    # 上部テロップ
-    bbox = draw.textbbox((0, 0), top_text, font=font_top)
-    tw = bbox[2] - bbox[0]
-    tx = (W - tw) // 2
-    ty = 120
-    draw.text((tx + 3, ty + 3), top_text, font=font_top, fill=(0, 0, 0, int(180 * alpha_factor)))
-    draw.text((tx, ty), top_text, font=font_top, fill=(255, 255, 255, alpha))
+    # テロップ描画
+    if top_text or bottom_text:
+        telop = draw_telop(frame, top_text, bottom_text, alpha_factor)
+        frame = Image.alpha_composite(frame, telop)
 
-    # 下部テロップ
-    bbox2 = draw.textbbox((0, 0), bottom_text, font=font_bottom)
-    bw = bbox2[2] - bbox2[0]
-    bx = (W - bw) // 2
-    by = H - 220
-    draw.text((bx + 3, by + 3), bottom_text, font=font_bottom, fill=(0, 0, 0, int(180 * alpha_factor)))
-    draw.text((bx, by), bottom_text, font=font_bottom, fill=(255, 230, 100, alpha))
+    # シーン全体フェード（最初と最後）
+    if t < 0.3:
+        black = Image.new("RGBA", (W, H), (0, 0, 0, int(255 * (1 - t / 0.3))))
+        frame = Image.alpha_composite(frame, black)
+    elif t > duration - 0.3:
+        remain = duration - t
+        black = Image.new("RGBA", (W, H), (0, 0, 0, int(255 * (1 - remain / 0.3))))
+        frame = Image.alpha_composite(frame, black)
 
-    return img.convert("RGB")
+    return frame.convert("RGB")
 
 # フレーム生成
 print("フレーム生成中...")
@@ -148,7 +182,7 @@ cmd = [
     "-i", os.path.join(TMP, "frame_%05d.png"),
     "-c:v", "libx264",
     "-pix_fmt", "yuv420p",
-    "-crf", "18",
+    "-crf", "17",
     "-preset", "fast",
     OUT
 ]
