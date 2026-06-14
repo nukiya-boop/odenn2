@@ -9,10 +9,32 @@ OUT = "/home/user/odenn2/pr_video.mp4"
 TMP = tempfile.mkdtemp()
 
 def _img(name):
+    # 赤丸マーク済み画像
+    if name == "IMG_0752_marked":
+        marked_path = "/tmp/img0752_marked.jpg"
+        if not os.path.exists(marked_path):
+            _make_marked_img(marked_path)
+        return marked_path
     for f in os.listdir(IMG_DIR):
         if name in f:
             return os.path.join(IMG_DIR, f)
     raise FileNotFoundError(name)
+
+def _make_marked_img(out_path):
+    for f in os.listdir(IMG_DIR):
+        if "IMG_0752" in f:
+            src = os.path.join(IMG_DIR, f)
+            break
+    img = Image.open(src).convert("RGBA")
+    iw, ih = img.size  # 1080x1350
+    draw = ImageDraw.Draw(img)
+    # 「おでん×スタンド 三徳六味」: 中央やや下
+    cx1, cy1, r1 = int(iw * 0.50), int(ih * 0.60), 90
+    draw.ellipse([cx1-r1, cy1-r1, cx1+r1, cy1+r1], outline=(255, 30, 30, 255), width=8)
+    # 「E-07」: 中央右上
+    cx2, cy2, r2 = int(iw * 0.62), int(ih * 0.38), 60
+    draw.ellipse([cx2-r2, cy2-r2, cx2+r2, cy2+r2], outline=(255, 30, 30, 255), width=8)
+    img.convert("RGB").save(out_path, quality=95)
 
 # (キーワード, テロップ上, テロップ下, 秒数)  ※下テロップNoneで非表示
 SCENES = [
@@ -21,8 +43,8 @@ SCENES = [
     ("お出汁",    "丁寧にとった長時間コトコトだし",    "コクの旨味がしみわたる一品", 4),
     ("組み合わせ","女子会・デートにも",                "お好みで選べるコース料理",   4),
     ("IMG_0738",  "スタイリッシュな店内で",            "気軽に立ち寄りやすい",       3),
-    ("IMG_0747",  "女性一人でも安心",                  "アフターワークにも最適",     3),
-    ("IMG_0752",  "豊富なラインナップ",                "ヘルシーなおでんも",         3),
+    ("IMG_0747",  "女性一人でも安心",                  "仕事おわりに至福のひとときを", 3),
+    ("IMG_0752_marked", "大阪メトロ梅田からすぐ",     "おでん×スタンド",            3),
     ("QR",        None,                                None,                         5),
 ]
 
@@ -108,12 +130,6 @@ def draw_telop(base, top_text, bottom_text, alpha_factor):
         # アクセントライン（下）
         draw.line([(60, H - 130), (W - 60, H - 130)], fill=(200, 170, 100, line_alpha), width=1)
 
-        # 小さなサブテキスト
-        sub = "おでん × スタンド"
-        bbox3 = draw.textbbox((0, 0), sub, font=font_accent)
-        sw = bbox3[2] - bbox3[0]
-        draw.text(((W - sw) // 2, H - 110), sub, font=font_accent,
-                  fill=(200, 180, 140, int(180 * a)))
 
     return layer
 
